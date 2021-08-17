@@ -1,0 +1,611 @@
+---
+title: "Explore term 1 & term2 exam data"
+output:
+  pdf_document: default
+  html_document:
+    keep_md: yes
+  word_document: default
+---
+========================================================  
+## Introduction
+Exploring exam data of term one and two.
+
+## Preparation
+### Setting up working environment
+
+* Working Directory  
+A directory named 'Exam' is built as the main working directory of this work 
+
+* Software Packages
+To finish the project, a couple of software needs to be installed.   
+-- R Version 4.1.0 64bit  
+-- RStudio Version 1.4.1717  
+-- notepad++ Version 7.9.1  
+The following packages in R are expected to be used:  
+-- knitr - markdown tools  
+-- ggplot2  
+-- dplyr 
+-- tidyr 
+-- Kendall 
+-- nortest 
+-- effectsize 
+-- HH 
+
+### Loading and preprocessing the data
+
+Load the data, which can be found at 
+[https://github.com/sunbaoshi1975/UWThesisDataset](https://github.com/sunbaoshi1975/UWThesisDataset). 
+
+The original data is assumed to be placed in the working directory.
+
+```{r loadLibs, echo=FALSE, results='hide', include=FALSE}
+# Notes: if fail to load library, use install.packages("Package Name") to download and install it first.
+#install.packages("tidyr")
+#install.packages("effectsize")
+#install.packages('HH')
+
+library("dplyr")
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(Kendall)
+library(nortest)
+library(methods)
+library(effectsize)
+library(HH)
+```
+
+```{r commonDef}
+# some constants
+strOperationLog <- "operation_log.csv"
+strDataFileList <- "examDataFileList.csv"
+
+## This path should be changed accordingly when performing reproducible research on your computer
+#setwd("D:\\Exam")
+
+```
+
+```{r commonFunctions}
+colApply <- function(dat, cols = colnames(dat), func = as.factor) {
+  dat[cols] <- lapply(dat[cols], func)
+  return(dat)
+}
+
+loadRawData <- function(filename, exGroup, exRoom, exTerm)
+{
+  if (file.exists(filename)) {
+    suppressWarnings(raw.data <- read.csv(filename, header=TRUE, na.strings=c("NA","#DIV/0!","")))
+
+    ## Filter data
+    columns <- c("RID")
+    columns <- c(columns, "Gender")
+    columns <- c(columns, "Chinese")
+    columns <- c(columns, "Math")
+    loaded <- raw.data[!is.na(raw.data$RID), columns]
+
+    ## Expand columns
+    ### Total, Group, Room, Term
+    loaded <- cbind(loaded, Total=loaded$Chinese+loaded$Math, Group=exGroup, Room=exRoom, Term=exTerm)
+  }
+}
+
+meanRound <- function(x, digits = 1, trim = 0, na.rm = FALSE, ...) {
+  return(round(mean(x, trim=trim, na.rn=na.rm, ...), digits=digits))
+}
+
+## Calculate changes between the two terms
+getChangedColumn <- function(x, name, num) {
+  changes = c()
+  for (i in 1:num) {
+    changes <- c(changes, NA, x[name][i*2,1]-x[name][i*2-1,1])
+  }
+  return(changes)
+}
+
+## Calculate increments of experimental group, control group and their gap
+computeIncrement <- function(x, y, g) {
+  incExp <- mean(x[g=='Experimental']) / mean(y[g=='Experimental'])
+  incControl <- mean(x[g=='Control']) / mean(y[g=='Control'])
+  IncGap <- incExp - incControl
+  return(c(incExp, incControl, IncGap))
+}
+```
+
+```{r loadOperationLog, cache=TRUE}
+## Load Operation Log
+if (!file.exists(strOperationLog)) {
+  ## warn the missing file
+	sprintf("File %s not found!", strOperationLog)
+} else {
+  work.opLog <- read.csv(strOperationLog, header=TRUE, na.strings=c("NA","#DIV/0!",""))
+  ## Convert Group, Room, Type, Method to factor
+  work.opLog <- colApply(work.opLog, c('Group','Room','Type','Method'))
+}
+```
+
+```{r loadDataFileList, cache=TRUE}
+## Load file list
+if (!file.exists(strDataFileList)) {
+  ## warn the missing file
+	sprintf("File %s not found!", strDataFileList)
+} else {
+  work.flist <- read.csv(strDataFileList, header=TRUE, na.strings=c("NA","#DIV/0!",""))
+}
+```
+
+```{r loadMainDataFiles}
+for (i in 1:nrow(work.flist)) {
+  temp.examData <- loadRawData(work.flist$filename[i], work.flist$group[i], work.flist$room[i], work.flist$term[i])
+  if(i == 1) {
+    work.df <- temp.examData
+  } else {
+    work.df <- rbind(work.df, temp.examData)
+  }
+}
+
+## Convert Gender, Group, Room, Term to factor
+work.df <- colApply(work.df, c('Gender','Group','Room','Term'))
+## Description of the main date frame
+str(work.df)
+head(work.df)
+tail(work.df)
+summary(work.df)
+```
+
+## Exploratory Data Analysis
+
+Calculate the mean values of overall performance, by-subject performance, by-gender performance, as well as by-subject-and-gender performance.
+
+Calculate and report the mean values.
+
+```{r exploratoryDataAnalysis}
+columns <- c("Chinese")
+columns <- c(columns, "Math")
+columns <- c(columns, "Total")
+
+# By subject
+eda.subject <- aggregate(work.df[, columns], by=list(Term=work.df$Term, Group=work.df$Group), FUN = meanRound)
+
+# By gender
+eda.gender <- aggregate(work.df[, columns], by=list(Term=work.df$Term, Gender=work.df$Gender, Group=work.df$Group), FUN = meanRound)
+
+# By classroom
+eda.room <- aggregate(work.df[, columns], by=list(Term=work.df$Term, Group=work.df$Group, Room=work.df$Room), FUN = meanRound)
+
+# View the sorted by-classroom list
+View(eda.room[order(eda.room$Term, -eda.room$Total),])
+```
+
+```{r edaCalulateChangesBySubject}
+changes <- getChangedColumn(eda.subject, 'Chinese', 2)
+eda.subjectEx <- cbind(eda.subject, chgCN=changes)
+
+changes <- getChangedColumn(eda.subject, 'Math', 2)
+eda.subjectEx <- cbind(eda.subjectEx, chgMath=changes)
+
+changes <- getChangedColumn(eda.subject, 'Total', 2)
+eda.subjectEx <- cbind(eda.subjectEx, chgTotal=changes)
+
+eda.subjectEx[, c('Term','Group','Chinese','chgCN','Math','chgMath','Total','chgTotal')]
+
+```
+
+```{r edaCalulateChangesByGender}
+## Calculate changes between the two terms
+changes <- getChangedColumn(eda.gender, 'Chinese', 4)
+eda.genderEx <- cbind(eda.gender, chgCN=changes)
+
+changes <- getChangedColumn(eda.gender, 'Math', 4)
+eda.genderEx <- cbind(eda.genderEx, chgMath=changes)
+
+changes <- getChangedColumn(eda.gender, 'Total', 4)
+eda.genderEx <- cbind(eda.genderEx, chgTotal=changes)
+
+eda.genderEx[, c('Term','Gender','Group','Chinese','chgCN','Math','chgMath','Total','chgTotal')]
+
+```
+
+```{r edaCalulateChangesByClassroom}
+# Calculate score changes from Term 2 to term 1 for each classroom
+columns <- c("Group")
+columns <- c(columns, "Room")
+columns <- c(columns, "Chinese")
+columns <- c(columns, "Math")
+columns <- c(columns, "Total")
+
+# Split & Merge data sets
+temp.x=eda.room[eda.room$Term==2,columns]
+temp.y=eda.room[eda.room$Term==1,columns]
+temp.merged <- merge(temp.x, temp.y, by=c('Group','Room'))
+# Another method
+#temp.merged <- spread(eda.room[,c('Term','Group','Room','Total')], Term, Total)
+# Compute changes
+eda.roomEx <- mutate(temp.merged, chgCN=Chinese.x-Chinese.y, chgMath=Math.x-Math.y, chgTotal=Total.x-Total.y)
+
+View(eda.roomEx[,c('Group','Room','chgCN','chgMath','chgTotal')])
+```
+
+
+```{r edaPlot_Overall}
+#--------------------------------
+## Save as png
+png(filename='plotOverall.png')
+
+## Colors
+myColors=c('Total'="#3591d1", 'Chinese'="#f04546", 'Math'="#62c76b")
+## Draw Plot: multiple-line chart
+p <- ggplot(data=eda.subject, aes(x=Term, shape=Group, fill=Group)) + 
+  geom_line(aes(y=Total, group=Group, colour="Total")) + 
+  geom_point(position=position_dodge(0.1), size=3, aes(y=Total)) +
+  geom_text(aes(y=Total,label=round(Total,digits=1)), position=position_dodge(width=0.5), vjust=-0.5) +
+  geom_line(aes(y=Chinese, group=Group, colour="Chinese")) + 
+  geom_point(position=position_dodge(0.1), size=3, aes(y=Chinese)) +
+  geom_text(aes(y=Chinese,label=round(Chinese,digits=1)), position=position_dodge(width=0.5), vjust=-0.5) +
+  geom_line(aes(y=Math, group=Group, colour="Math")) + 
+  geom_point(position=position_dodge(0.1), size=3, aes(y=Math)) +
+  geom_text(aes(y=Math,label=round(Math,digits=1)), position=position_dodge(width=0.5), vjust=-0.5) +
+  scale_colour_manual(name="Subject", values=myColors) +
+  labs(title="Performance Changes", subtitle="Overvall & By-subject") + xlab("Term") + ylab("Exam Score")
+
+## Show the graph
+print(p)
+#--------------------------------
+```
+
+```{r edaPlot_ByClassroom}
+#--------------------------------
+## Save as png
+png(filename='plotByClassroom.png')
+
+meanChgExp = mean(eda.roomEx[which(eda.roomEx$Group=='Experimental'), 'chgTotal'])
+meanChgControl = mean(eda.roomEx[which(eda.roomEx$Group=='Control'), 'chgTotal'])
+
+## Colors
+myColorGroup=c('Experimental'="#548687", 'Control'="#8FBC94")
+
+## Draw Plot: histogram
+p <- ggplot(data=eda.roomEx, aes(x=Room, y=chgTotal, fill=Group)) + 
+  geom_bar(stat='identity') + 
+  geom_text(aes(y=chgTotal, label=round(chgTotal,digits=1))) +
+  geom_hline(aes(yintercept=meanChgExp,col='Experimental'),linetype=5) +
+  geom_hline(aes(yintercept=meanChgControl,col='Control'),linetype=3) +
+  scale_fill_manual(name="Group", values=myColorGroup) + 
+  scale_colour_manual(name="Mean", values=myColorGroup) +
+  labs(title="Performance Changes", subtitle="By classroom") + xlab("Classroom") + ylab("Exam Score")
+
+## Show the graph
+print(p)
+
+## Close device
+#dev.off()
+#--------------------------------
+```
+
+```{r edaPlot_ByGender}
+#--------------------------------
+## Save as png
+png(filename='plotByGender.png')
+
+## Colors
+myColors2=c('F'="#E69F00", 'M'="#56B4E9")
+## Draw Plot: multiple-line chart
+p <- ggplot(data=eda.gender, aes(x=Term, y=Total, group=Group, shape=Group, colour=Gender)) + 
+  geom_line() + 
+  geom_point(position=position_dodge(0.1), size=3) +
+  geom_text(aes(y=Total,label=round(Total,digits=1)), position=position_dodge(width=0.5), vjust=-0.5) +
+  facet_wrap(facet = ~ Gender) +
+  scale_colour_manual(name="Gender", values=myColors2) +
+  labs(title="Performance Changes", subtitle="By-gender Overall") + xlab("Term") + ylab("Exam Score")
+
+## Show the graph
+print(p)
+
+## Close device
+#dev.off()
+
+#--------------------------------
+```
+```{r edaPlot_ByGenderSubject}
+#--------------------------------
+## Save as png
+png(filename='plotByGenderSubject.png')
+
+## Colors
+myColors3=c('Chinese'="#f04546", 'Math'="#62c76b")
+## Draw Plot: multiple-line chart
+p <- ggplot(data=eda.gender, aes(x=Term, shape=Group)) + 
+  geom_line(aes(y=Chinese, group=Group, colour="Chinese")) + 
+  geom_point(position=position_dodge(0.1), size=3, aes(y=Chinese)) +
+  geom_text(aes(y=Chinese,label=round(Chinese,digits=1)), position=position_dodge(width=0.5), vjust=-0.5) +
+  geom_line(aes(y=Math, group=Group, colour="Math")) + 
+  geom_point(position=position_dodge(0.1), size=3, aes(y=Math)) +
+  geom_text(aes(y=Math,label=round(Math,digits=1)), position=position_dodge(width=0.5), vjust=-0.5) +
+  facet_wrap(facet = ~ Gender) +
+  scale_colour_manual(name="Subject", values=myColors3) +
+  labs(title="Performance Changes", subtitle="By gender and subject") + xlab("Term") + ylab("Exam Score")
+
+## Show the graph
+print(p)
+
+## Close device
+#dev.off()
+
+#--------------------------------
+```
+
+```{r normalityTest, echo=TRUE}
+hist(work.df$Total, breaks=20, main="Overall Score Distribution", col="blue", xlab="Chinese + Mathematics")
+ad.test(work.df$Total)
+```
+```{r homoscedasticityTest, echo=TRUE}
+## bartlett.test require normality, so we turn to Fligner-Killeen test, which does not require normality
+#bartlett.test(work.df$Total~work.df$Group)
+fligner.test(work.df$Total~work.df$Group)
+```
+
+```{r removalUnpairedRecord}
+temp.x=work.df[work.df$Term==2,]
+temp.y=work.df[work.df$Term==1,]
+temp.merged <- merge(temp.x, temp.y, by=c('Group','Room','RID'))
+temp.unpaired <- temp.merged[which(temp.merged$Chinese.x==0 | temp.merged$Math.x==0 | temp.merged$Chinese.y==0 | temp.merged$Math.y==0),]
+
+work.df <- mutate(work.df, Room_RID=paste(Room, RID, sep='_'))
+temp.unpaired <- mutate(temp.unpaired, Room_RID=paste(Room, RID, sep='_'))
+work.dfPaired <- anti_join(work.df, temp.unpaired, by='Room_RID')
+```
+
+```{r calculateChanges}
+temp.x=work.dfPaired[work.dfPaired$Term==2,]
+temp.y=work.dfPaired[work.dfPaired$Term==1,]
+temp.merged <- merge(temp.x, temp.y, by=c('Group','Room','RID','Room_RID','Gender'))
+work.dfChanges <- mutate(temp.merged, chgTotal=Total.x-Total.y, chgChinese=Chinese.x-Chinese.y, chgMath=Math.x-Math.y)
+```
+
+```{r tTest_OpLog}
+columns <- c("Times")
+
+# Manual or Auto
+work.opLogType <- aggregate(work.opLog[, columns], by=list(Group=work.opLog$Group, Room=work.opLog$Room, Type=work.opLog$Type), FUN = sum)
+work.opLogTypeDaily <- mutate(work.opLogType, timesPerDay=x/662)
+
+# t-test
+data=work.opLogTypeDaily[work.opLogTypeDaily$Type=='Manual', ]
+t.test(data$timesPerDay~data$Group, alternative="greater")
+
+mean(data[data$Group=='Control', c("timesPerDay")]);sd(data[data$Group=='Control', c("timesPerDay")])
+mean(data[data$Group=='Experimental', c("timesPerDay")]);sd(data[data$Group=='Experimental', c("timesPerDay")])
+```
+```{r plotOpeLogManual}
+#--------------------------------
+## Save as png
+png(filename='plotOpeLogManual.png')
+
+## Draw Plot: box-plot
+p <- ggplot(data, aes(x=Group, y=timesPerDay, fill=Group)) + 
+  geom_boxplot(outlier.shape=21,) + theme_bw() +
+  geom_point(position = position_jitterdodge()) +
+  labs(title="User Operational Preference", subtitle="Manual Operations per Day") + xlab("Group") + ylab("Times")
+
+## Show the graph
+print(p)
+
+## Close device
+dev.off()
+
+#--------------------------------
+```
+## Overall Performance Changes (OPC)
+**A one-way ANOVA was employed to check the effect of the two lighting settings on participants’ overall performance changes. **
+
+```{r plotOverallPerformanceChanges}
+#--------------------------------
+## Save as png
+png(filename='plotAnovaOverall.png')
+
+## Draw Plot: box-plot
+p <- ggplot(work.dfChanges, aes(x=Group, y=chgTotal, fill=Group)) + 
+  geom_boxplot(outlier.shape=21,) + theme_bw() +
+  labs(title="Performance Changes from Term 1 to Term 2", subtitle="Overall: Chinese plus Mathematics") + xlab("Group") + ylab("Score Changes")
+
+## Show the graph
+print(p)
+
+## Close device
+dev.off()
+
+#--------------------------------
+```
+```{r anova_Overall}
+# ANOVA - Overall Changes
+ano.overall <- aov(chgTotal ~ Group, data=work.dfChanges)
+ano.overall
+summary(ano.overall)
+coefficients(ano.overall)
+
+temp.increment <- computeIncrement(work.dfChanges$chgTotal, work.dfChanges$Total.y, work.dfChanges$Group)
+sprintf("Overall socre of experimental group gained %.2f%% higher increment than control group", temp.increment[3]*100)
+
+# Effect Size with 95% CI
+eta_squared(ano.overall, ci=0.95)
+
+# Since significance is reported, TukeyHSD needs to be performed to compare the effect of different level
+TukeyHSD(ano.overall)
+```
+
+## By-subject Performance Changes (PC-S)
+**A one-way MANOVA was used to examine to the response of the two subjects as well as each of them **
+
+```{r plotBySubjectPerformanceChanges}
+#--------------------------------
+## Save as png
+png(filename='plotAnovaBySubject.png')
+
+## Draw Plot: box-plot
+p <- ggplot(work.dfChanges, aes(fill=Group)) + 
+  geom_boxplot(outlier.shape=21, aes(y=chgChinese, x='Chinese', group=Group)) +
+  geom_boxplot(outlier.shape=21, aes(y=chgMath, x='Mathematics', group=Group)) + 
+  labs(title="Performance Changes from Term 1 to Term 2", subtitle="By Subject") + xlab("Subject") + ylab("Score Changes") +
+  #scale_y_continuous(limits = quantile(work.dfChanges$chgTotal, c(0.2, 0.8))) +
+  theme_bw()
+
+## Show the graph
+print(p)
+
+## Close device
+dev.off()
+
+#--------------------------------
+```
+
+```{r manova_BySubject}
+# MANOVA - By-subject Changes
+mano.subject <- manova(cbind(chgChinese, chgMath) ~ Group, data=work.dfChanges)
+mano.subject
+
+# Is changes of Chinese and Math significantly different between groups
+summary.manova(mano.subject)
+
+# Check the effect on each subject
+summary.aov(mano.subject)
+
+coefficients(mano.subject)
+
+temp.increment <- computeIncrement(work.dfChanges$chgChinese, work.dfChanges$Chinese.y, work.dfChanges$Group)
+sprintf("Chinese of experimental group improved %.2f%% higher than control group", temp.increment[3]*100)
+
+temp.increment <- computeIncrement(work.dfChanges$chgMath, work.dfChanges$Math.y, work.dfChanges$Group)
+sprintf("Math of experimental group improved %.2f%% higher than control group", temp.increment[3]*100)
+
+# Effect Size with 95% CI
+eta_squared(mano.subject, ci=0.95)
+```
+## By-gender Performance Changes (PC-G)
+**A two-way ANOVA was applied to examine the impact of lighting modes on the changes of overall scores of each gender. **
+
+```{r plotByGenderPerformanceChanges}
+#--------------------------------
+## Save as png
+png(filename='plotAnovaByGender.png')
+
+## Draw Plot: box-plot
+p <- ggplot(work.dfChanges, aes(y=chgTotal, fill=Group, group=Group)) + 
+  geom_boxplot(outlier.shape=21) +
+  facet_wrap(facet = ~ Gender) +
+  labs(title="Performance Changes from Term 1 to Term 2", subtitle="By Gender") + xlab("Gender") + ylab("Score Changes") +
+  #scale_y_continuous(limits = quantile(work.dfChanges$chgTotal, c(0.2, 0.8))) +
+  theme_bw()
+
+## Show the graph
+print(p)
+
+## Close device
+dev.off()
+
+#--------------------------------
+```
+```{r plotGroupGenderInteraction}
+#--------------------------------
+## Save as png
+png(filename='plotGender_Group.png')
+
+p <- interaction2wt(chgTotal ~ Group + Gender, data=work.dfChanges, main.in='Main effects and 2-way interactions of PC-G', responselab='')
+
+## Show the graph
+print(p)
+
+## Close device
+dev.off()
+```
+
+```{r anova_ByGender}
+# ANOVA - By gender delta
+ano.gender <- aov(chgTotal ~ Group * Gender, data=work.dfChanges)
+ano.gender
+summary(ano.gender)
+coefficients(ano.gender)
+
+work.dfChangesGirls <- work.dfChanges[work.dfChanges$Gender=='F',]
+temp.increment <- computeIncrement(work.dfChangesGirls$chgTotal, work.dfChangesGirls$Total.y, work.dfChangesGirls$Group)
+sprintf("Score of girls in experimental group improved %.2f%% higher than that of in control group", temp.increment[3]*100)
+
+work.dfChangesBoys <- work.dfChanges[work.dfChanges$Gender=='M',]
+temp.increment <- computeIncrement(work.dfChangesBoys$chgTotal, work.dfChangesBoys$Total.y, work.dfChangesBoys$Group)
+sprintf("Score of boys in experimental group improved %.2f%% higher than that of in control group", temp.increment[3]*100)
+
+# Effect Size with 95% CI
+eta_squared(ano.gender, ci=0.95)
+
+# Since significance is reported, TukeyHSD needs to be performed to compare the effect of different level
+TukeyHSD(ano.gender)
+```
+## Performance Changes By-subject and By-genders (PC-SG)
+**A two-way MANOVA was performed to analyze the detailed effects on different subject and different gender. **
+
+```{r plotBySubjectGenderPerformanceChanges}
+#--------------------------------
+## Save as png
+png(filename='plotAnovaBySubjectGender.png')
+
+## Draw Plot: box-plot
+p <- ggplot(work.dfChanges, aes(fill=Group)) + 
+  geom_boxplot(outlier.shape=21, aes(y=chgChinese, x='Chinese', group=Group)) +
+  geom_boxplot(outlier.shape=21, aes(y=chgMath, x='Mathematics', group=Group)) + 
+  facet_wrap(facet = ~ Gender) +
+  labs(title="Performance Changes from Term 1 to Term 2", subtitle="By Subject & Gender") + xlab("Subject") + ylab("Score Changes") +
+  #scale_y_continuous(limits = quantile(work.dfChanges$chgTotal, c(0.2, 0.8))) +
+  theme_bw()
+
+## Show the graph
+print(p)
+
+## Close device
+dev.off()
+
+#--------------------------------
+```
+
+```{r manova_SubjectGender}
+# 2-way MANOVA: Chinese, Math ~ Group + Gender
+mano.gender <- manova(cbind(chgChinese, chgMath) ~ Group + Gender, data=work.dfChanges)
+mano.gender
+
+# Is changes of Chinese and Math significantly different between groups
+summary.manova(mano.gender)
+
+# Check the effect on each subject
+summary.aov(mano.gender)
+
+coefficients(mano.gender)
+
+temp.increment <- computeIncrement(work.dfChangesGirls$chgChinese, work.dfChangesGirls$Chinese.y, work.dfChangesGirls$Group)
+sprintf("Chinese of girls in experimental group improved %.2f%% higher than control group", temp.increment[3]*100)
+
+temp.increment <- computeIncrement(work.dfChangesGirls$chgMath, work.dfChangesGirls$Math.y, work.dfChangesGirls$Group)
+sprintf("Math of girls in experimental group improved %.2f%% higher than control group", temp.increment[3]*100)
+
+temp.increment <- computeIncrement(work.dfChangesBoys$chgChinese, work.dfChangesBoys$Chinese.y, work.dfChangesBoys$Group)
+sprintf("Chinese of boys in experimental group improved %.2f%% higher than control group", temp.increment[3]*100)
+
+temp.increment <- computeIncrement(work.dfChangesBoys$chgMath, work.dfChangesBoys$Math.y, work.dfChangesBoys$Group)
+sprintf("Math of boys in experimental group improved %.2f%% higher than control group", temp.increment[3]*100)
+
+# Effect Size with 95% CI
+eta_squared(mano.gender, ci=0.95)
+```
+```{r manova_GenderGroup}
+# 2-way MANOVA: Chinese, Math ~ Gender + Group
+mano.genderG <- manova(cbind(chgChinese, chgMath) ~ Gender + Group, data=work.dfChanges)
+mano.genderG
+
+# Is changes of Chinese and Math significantly different between groups
+summary.manova(mano.genderG)
+
+# Check the effect on each subject
+summary.aov(mano.genderG)
+
+coefficients(mano.genderG)
+
+# Effect Size with 95% CI
+eta_squared(mano.genderG, ci=0.95)
+```
+
