@@ -151,6 +151,21 @@ head(work.df)
 tail(work.df)
 summary(work.df)
 ```
+It was presumed that there was no significant difference in terms of the initial performance between the control group and the experimental group. Since the lighting mode for both groups was the same by the end of term 1, the scores of term 1 were considered as the initial performance. A two-sample two-tailed t-test was performed and reported no significance on each subject.
+
+Let's check it. 
+
+```{r priori_tTest, echo=TRUE}
+
+data = work.df[work.df$Term=='1', ]
+
+# t-test on Term 1 Chinese
+t.test(data$Chinese~data$Group)
+
+# t-test on Term 1 Math
+t.test(data$Math~data$Group)
+
+```
 
 ## Exploratory Data Analysis
 
@@ -175,6 +190,7 @@ eda.room <- aggregate(work.df[, columns], by=list(Term=work.df$Term, Group=work.
 # View the sorted by-classroom list
 View(eda.room[order(eda.room$Term, -eda.room$Total),])
 ```
+
 
 ```{r edaCalulateChangesBySubject}
 changes <- getChangedColumn(eda.subject, 'Chinese', 2)
